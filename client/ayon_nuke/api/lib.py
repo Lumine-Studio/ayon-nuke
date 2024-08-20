@@ -1176,6 +1176,16 @@ def create_write_node(
         anatomy_filled["work"]["default"]["directory"]
     ).replace("\\", "/")
     data["work"] = fdir
+
+    anatomy_work_render = anatomy_filled["work"].get("work_render")
+
+    if anatomy_work_render:
+        fdir_render = str(
+            anatomy_filled["work"]["work_render"]["directory"]
+        ).replace("\\", "/")
+
+        data["work_render"] = fdir_render
+
     fpath = StringTemplate(data["fpath_template"]).format_strict(data)
 
     # create directory
@@ -1575,12 +1585,12 @@ class WorkfileSettings(object):
         if not config_data:
             # no ocio config found and no custom path used
             if self._root_node["colorManagement"].value() \
-                        not in color_management:
+                    not in color_management:
                 self._root_node["colorManagement"].setValue(color_management)
 
             # second set ocio version
             if self._root_node["OCIO_config"].value() \
-                        not in native_ocio_config:
+                    not in native_ocio_config:
                 self._root_node["OCIO_config"].setValue(native_ocio_config)
 
         else:
