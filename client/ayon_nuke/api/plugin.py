@@ -40,7 +40,8 @@ from .lib import (
     get_node_data,
     get_view_process_node,
     get_filenames_without_hash,
-    link_knobs
+    link_knobs,
+    duplicate_node
 )
 from .pipeline import (
     list_instances,
@@ -923,6 +924,25 @@ class ExporterReviewMov(ExporterReview):
             # append reformatted tag
             add_tags.append("reformatted")
 
+        if "lmn-slate" in add_custom_tags:
+            self.first_frame = self.first_frame - 1
+            slate = next(
+                (
+                    n_ for n_ in nuke.allNodes()
+                    if "PROJECT_SLATE_" in n_.name()
+                    if not n_["disable"].getValue() and
+                    # Exclude instance nodes.
+                    "publish_instance" not in n_.knobs()
+                ),
+                None
+            )
+
+            duply_slate_node = duplicate_node(slate)
+            duply_slate_node["f_media_color"].setValue("Rec709")
+            self._connect_to_above_nodes(
+                duply_slate_node, product_name, "Adding slate node...   `{}`"
+            )
+
         # only create colorspace baking if toggled on
         if bake_viewer_process:
             if bake_viewer_input_process_node:
@@ -1000,16 +1020,30 @@ class ExporterReviewMov(ExporterReview):
 
         # Knobs `meta_codec` and `mov64_codec` are not available on centos.
         # TODO shouldn't this come from settings on outputs?
+
+        codec = "apcn"
+        mov_64 = "apcn"
+
+        if "AVdh" in add_custom_tags:
+            codec = "AVdh"
+            mov_64_profile = "HQX 4:2:2 12-bit"
+            self.log.info("AVdh codec is set...")
+
         try:
-            write_node["meta_codec"].setValue("apcn")
+            write_node["meta_codec"].setValue(codec)
         except Exception:
             self.log.info("`meta_codec` knob was not found")
 
         try:
-            write_node["mov64_codec"].setValue("apcn")
+            write_node["mov64_codec"].setValue(codec)
             write_node["mov64_fps"].setValue(float(fps))
         except Exception:
             self.log.info("`mov64_codec` knob was not found")
+
+        if codec == "AVdh":
+            write_node["mov64_dnxhr_codec_profile"].setValue(mov_64_profile)
+
+        write_node["dataRange"].setValue("Video Range")
 
         try:
             write_node["mov64_write_timecode"].setValue(1)
@@ -1052,6 +1086,10 @@ class ExporterReviewMov(ExporterReview):
         self.log.debug(f"Representation...   `{self.data}`")
 
         self.clean_nodes(product_name)
+
+        if "lmn-slate" in add_custom_tags:
+            self.first_frame = self.first_frame + 1
+
         nuke.scriptSave()
 
         return self.data
