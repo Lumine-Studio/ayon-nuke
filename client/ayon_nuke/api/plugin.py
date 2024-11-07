@@ -1043,7 +1043,11 @@ class ExporterReviewMov(ExporterReview):
         if codec == "AVdh":
             write_node["mov64_dnxhr_codec_profile"].setValue(mov_64_profile)
 
-        write_node["dataRange"].setValue("Video Range")
+        if "full-range" in add_custom_tags:
+            write_node["dataRange"].setValue("Full Range")
+
+        if "video-range" in add_custom_tags:
+            write_node["dataRange"].setValue("Video Range")
 
         try:
             write_node["mov64_write_timecode"].setValue(1)
