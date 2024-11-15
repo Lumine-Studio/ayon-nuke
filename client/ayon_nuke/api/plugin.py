@@ -1071,6 +1071,12 @@ class ExporterReviewMov(ExporterReview):
                 "bakeWriteNodeName": write_node.name(),
                 "bakeRenderPath": self.path
             })
+
+            if "lmn-slate" in add_custom_tags:
+                self.data.update({
+                    "bakeSlate": True
+                })
+
         else:
             self.render(write_node.name())
 

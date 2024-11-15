@@ -134,7 +134,8 @@ class ExtractReviewIntermediates(publish.Extractor):
                     instance.data["bakingNukeScripts"].append({
                         "bakeRenderPath": data.get("bakeRenderPath"),
                         "bakeScriptPath": data.get("bakeScriptPath"),
-                        "bakeWriteNodeName": data.get("bakeWriteNodeName")
+                        "bakeWriteNodeName": data.get("bakeWriteNodeName"),
+                        "bakeSlate": data.get("bakeSlate")
                     })
                 else:
                     data = exporter.generate_mov(delete=delete, **o_data)
