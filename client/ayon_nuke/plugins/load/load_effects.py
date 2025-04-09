@@ -1,7 +1,6 @@
 import json
 from collections import OrderedDict
 import nuke
-import six
 import ayon_api
 
 from ayon_core.pipeline import (
@@ -319,7 +318,7 @@ class LoadEffects(load.LoaderPlugin):
             for subTrackIndex in range(
                     min(subTrackNums), max(subTrackNums) + 1):
                 item = self.get_item(data, trackIndex, subTrackIndex)
-                if item is not {}:
+                if item:
                     new_order.update(item)
         return new_order
 
@@ -347,7 +346,7 @@ class LoadEffects(load.LoaderPlugin):
                     for key, value in input.items()}
         elif isinstance(input, list):
             return [self.byteify(element) for element in input]
-        elif isinstance(input, six.text_type):
+        elif isinstance(input, str):
             return str(input)
         else:
             return input

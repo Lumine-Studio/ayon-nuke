@@ -1,9 +1,9 @@
 import os
 import re
 import json
-import six
 import functools
 import warnings
+import pathlib
 import platform
 import tempfile
 import contextlib
@@ -21,7 +21,6 @@ from ayon_core.pipeline.workfile.workfile_template_builder import (
 from ayon_core.lib import (
     env_value_to_bool,
     Logger,
-    get_version_from_path,
     StringTemplate,
 )
 
@@ -30,16 +29,22 @@ from ayon_core.settings import (
     get_current_project_settings,
 )
 from ayon_core.addon import AddonsManager
-from ayon_core.pipeline.template_data import get_template_data_with_names
+from ayon_core.pipeline.template_data import (
+    get_template_data_with_names,
+    get_template_data,
+)
 from ayon_core.pipeline import (
     Anatomy,
+    registered_host,
     get_current_host_name,
     get_current_project_name,
     get_current_folder_path,
     get_current_task_name,
     AYON_INSTANCE_ID,
     AVALON_INSTANCE_ID,
+    get_current_context,
 )
+from ayon_core.pipeline.load import filter_containers
 from ayon_core.pipeline.context_tools import (
     get_current_context_custom_workfile_template
 )
@@ -47,11 +52,18 @@ from ayon_core.pipeline.colorspace import (
     get_current_context_imageio_config_preset
 )
 from ayon_core.pipeline.workfile import BuildWorkfile
-from . import gizmo_menu
-from .constants import ASSIST
+from ayon_core.resources import get_ayon_icon_filepath
+
+from .gizmo_menu import GizmoMenu
+from .constants import (
+    ASSIST,
+    LOADER_CATEGORY_COLORS,
+)
 
 from .workio import save_file
 from .utils import get_node_outputs
+
+from .colorspace import get_formatted_display_and_view
 
 log = Logger.get_logger(__name__)
 
@@ -180,7 +192,7 @@ def get_node_data(node, knobname):
 
     rawdata = node[knobname].getValue()
     if (
-        isinstance(rawdata, six.string_types)
+        isinstance(rawdata, str)
         and rawdata.startswith(JSON_PREFIX)
     ):
         try:
@@ -248,7 +260,7 @@ def create_knobs(data, tab=None):
         int: nuke.Int_Knob
         float: nuke.Double_Knob
         list: nuke.Enumeration_Knob
-        six.string_types: nuke.String_Knob
+        str: nuke.String_Knob
 
         dict: If it's a nested dict (all values are dict), will turn into
             A tabs group. Or just a knobs group.
@@ -297,7 +309,7 @@ def create_knobs(data, tab=None):
             knob = nuke.Int_Knob(name, nice)
             knob.setValue(value)
 
-        elif isinstance(value, six.string_types):
+        elif isinstance(value, str):
             knob = nuke.String_Knob(name, nice)
             knob.setValue(value)
 
@@ -586,10 +598,13 @@ def read_avalon_data(node):
             if not knob_name:
                 # Ignore unnamed knob
                 continue
-
-            knob_type = nuke.knob(knob.fullyQualifiedName(), type=True)
-            value = knob.value()
-
+            try:
+                knob_type = nuke.knob(knob.fullyQualifiedName(), type=True)
+                value = knob.value()
+            except Exception:
+                log.debug(
+                    f"Error in knob {knob_name}, node {node['name'].value()}")
+                continue
             if (
                 knob_type not in EXCLUDED_KNOB_TYPE_ON_READ or
                 # For compating read-only string data that imprinted
@@ -662,9 +677,11 @@ def get_imageio_node_setting(node_class, plugin_name, product_name):
 
     imageio_node = None
     for node in required_nodes:
-        log.info(node)
+        node_class_preset = node["nuke_node_class"]
+        if node.get("custom_class"):
+            node_class_preset = node["custom_class"]
         if (
-            node_class in node["nuke_node_class"]
+            node_class in node_class_preset
             and plugin_name in node["plugins"]
         ):
             imageio_node = node
@@ -694,18 +711,25 @@ def get_imageio_node_override_setting(
     # find matching override node
     override_imageio_node = None
     for onode in override_nodes:
-        if node_class not in onode["nuke_node_class"]:
+
+        node_class_preset = onode["nuke_node_class"]
+
+        if onode.get("custom_class"):
+            node_class_preset = onode["custom_class"]
+
+        if node_class not in node_class_preset:
             continue
 
         if plugin_name not in onode["plugins"]:
             continue
 
-        # TODO change 'subsets' to 'product_names' in settings
+        product_names = onode["product_names"]
+
         if (
-            onode["subsets"]
+            product_names
             and not any(
                 re.search(s.lower(), product_name.lower())
-                for s in onode["subsets"]
+                for s in product_names
             )
         ):
             continue
@@ -744,6 +768,7 @@ def get_imageio_node_override_setting(
     return knobs_settings
 
 
+# TODO: move into ./colorspace.py
 def get_imageio_input_colorspace(filename):
     ''' Get input file colorspace based on regex in settings.
     '''
@@ -802,102 +827,39 @@ def on_script_load():
 
 
 def check_inventory_versions():
+    """Update loaded container nodes' colors based on version state.
+
+    This will group containers by their version to outdated, not found,
+    invalid or latest and colorize the nodes based on the category.
     """
-    Actual version identifier of Loaded containers
+    try:
+        host = registered_host()
+        containers = host.get_containers()
+        project_name = get_current_project_name()
 
-    Any time this function is run it will check all nodes and filter only
-    Loader nodes for its version. It will get all versions from database
-    and check if the node is having actual version. If not then it will color
-    it to red.
+        filtered_containers = filter_containers(containers, project_name)
+        for category, containers in filtered_containers._asdict().items():
+            if category not in LOADER_CATEGORY_COLORS:
+                continue
+            color = LOADER_CATEGORY_COLORS[category]
+            color = int(color, 16)  # convert hex to nuke tile color int
+            for container in containers:
+                container["node"]["tile_color"].setValue(color)
+    except Exception as error:
+        log.warning(error)
+
+
+def writes_version_sync(write_node, log):
+    """ Callback synchronizing version of publishable write nodes
+
+    Tries to find version string in render path of write node and bump it to
+    workfile version.
+
+    Args:
+        write_node (nuke.Node)
+        log (logging.Logger) - logger to output messages into Publisher
+
     """
-    from .pipeline import parse_container
-
-    # get all Loader nodes by avalon attribute metadata
-    node_with_repre_id = []
-    repre_ids = set()
-    # Find all containers and collect it's node and representation ids
-    for node in nuke.allNodes():
-        container = parse_container(node)
-
-        if container:
-            node = nuke.toNode(container["objectName"])
-            avalon_knob_data = read_avalon_data(node)
-            repre_id = avalon_knob_data["representation"]
-
-            repre_ids.add(repre_id)
-            node_with_repre_id.append((node, repre_id))
-
-    # Skip if nothing was found
-    if not repre_ids:
-        return
-
-    project_name = get_current_project_name()
-    # Find representations based on found containers
-    repre_entities = ayon_api.get_representations(
-        project_name,
-        representation_ids=repre_ids,
-        fields={"id", "versionId"}
-    )
-    # Store representations by id and collect version ids
-    repre_entities_by_id = {}
-    version_ids = set()
-    for repre_entity in repre_entities:
-        # Use stringed representation id to match value in containers
-        repre_id = repre_entity["id"]
-        repre_entities_by_id[repre_id] = repre_entity
-        version_ids.add(repre_entity["versionId"])
-
-    version_entities = ayon_api.get_versions(
-        project_name,
-        version_ids=version_ids,
-        fields={"id", "version", "productId"},
-    )
-    # Store versions by id and collect product ids
-    version_entities_by_id = {}
-    product_ids = set()
-    for version_entity in version_entities:
-        version_entities_by_id[version_entity["id"]] = version_entity
-        product_ids.add(version_entity["productId"])
-
-    # Query last versions based on product ids
-    last_versions_by_product_id = ayon_api.get_last_versions(
-        project_name, product_ids=product_ids, fields={"id", "productId"}
-    )
-
-    # Loop through collected container nodes and their representation ids
-    for item in node_with_repre_id:
-        # Some python versions of nuke can't unfold tuple in for loop
-        node, repre_id = item
-        repre_entity = repre_entities_by_id.get(repre_id)
-        # Failsafe for not finding the representation.
-        if not repre_entity:
-            log.warning((
-                "Could not find the representation on node \"{}\""
-            ).format(node.name()))
-            continue
-
-        version_id = repre_entity["versionId"]
-        version_entity = version_entities_by_id.get(version_id)
-        if not version_entity:
-            log.warning((
-                "Could not find the version on node \"{}\""
-            ).format(node.name()))
-            continue
-
-        # Get last version based on product id
-        product_id = version_entity["productId"]
-        last_version = last_versions_by_product_id[product_id]
-        # Check if last version is same as current version
-        if last_version["id"] == version_entity["id"]:
-            color_value = "0x4ecd25ff"
-        else:
-            color_value = "0xd84f20ff"
-        node["tile_color"].setValue(int(color_value, 16))
-
-
-def writes_version_sync():
-    ''' Callback synchronizing version of publishable write nodes
-    '''
     try:
         rootVersion = get_version_from_path(nuke.root().name())
         padding = len(rootVersion)
@@ -905,32 +867,58 @@ def writes_version_sync():
             int(rootVersion)
         )
     except Exception:
+        log.warning("Scene name doesn't have version part.", exc_info=True)
         return
 
-    for each in nuke.allNodes(filter="Write"):
-        # check if the node is avalon tracked
-        if NODE_TAB_NAME not in each.knobs():
-            continue
+    try:
+        write_path = write_node["file"].value()
+        node_version = "v" + get_version_from_path(write_path)
+        node_new_file = write_path.replace(node_version, new_version)
 
-        avalon_knob_data = read_avalon_data(each)
+        def replace_match(match):
+            x_value = int(match.group(1))  # Extract the number X
+            return '#' * x_value  # Return '#' repeated X times
 
-        try:
-            if avalon_knob_data["families"] not in ["render"]:
-                continue
+        # Use regex to find all occurrences of '%0Xd' with `#`s
+        node_new_file = re.sub(r'%0*(\d+)d', replace_match, node_new_file)
 
-            node_file = each["file"].value()
+        log.debug(f"Overwriting Write path to '{node_new_file}'")
+        write_node["file"].setValue(node_new_file)
+        render_dir = os.path.dirname(node_new_file)
+        if not os.path.isdir(render_dir):
+            log.warning(f"Path '{render_dir}' does not exist! Creating it.")
+            os.makedirs(render_dir)
+    except Exception:
+        log.warning(
+            f"Write node: `{write_node.name()}` has no version "
+            f"in path: '{write_path}'. Expected format as `.vXXX` or `_vXXX`.",
+            exc_info=True
+        )
 
-            node_version = "v" + get_version_from_path(node_file)
+def get_version_from_path(file):
+    """Find version number in file path string.
 
-            node_new_file = node_file.replace(node_version, new_version)
-            each["file"].setValue(node_new_file)
-            if not os.path.isdir(os.path.dirname(node_new_file)):
-                log.warning("Path does not exist! I am creating it.")
-                os.makedirs(os.path.dirname(node_new_file))
-        except Exception as e:
-            log.warning(
-                "Write node: `{}` has no version in path: {}".format(
-                    each.name(), e))
+    Looks for formats:
+    - `_v0001`
+    - `.v001`
+    - `/v001/` - difference from ayon-core.path_tools.get_version_from_path
+
+    Args:
+        file (str): file path
+
+    Returns:
+        str: version number in string ('001')
+    """
+
+    pattern = re.compile(r"[\._/]v([0-9]+)", re.IGNORECASE)
+    try:
+        return pattern.findall(file)[-1]
+    except IndexError:
+        log.error(
+            "templates:get_version_from_workfile:"
+            "`{}` missing version string."
+            "Example `v004`".format(file)
+        )
 
 
 def version_up_script():
@@ -956,7 +944,7 @@ def check_product_name_exists(nodes, product_name):
                 False)
 
 
-def format_anatomy(data):
+def get_work_default_directory(data):
     ''' Helping function for formatting of anatomy paths
 
     Arguments:
@@ -993,7 +981,10 @@ def format_anatomy(data):
         },
         "frame": "#" * frame_padding,
     })
-    return anatomy.format(data)
+
+    work_default_dir_template = anatomy.get_template_item("work", "default", "directory")
+    normalized_dir = work_default_dir_template.format_strict(data).normalized()
+    return str(normalized_dir).replace("\\", "/")
 
 
 def script_name():
@@ -1028,7 +1019,7 @@ def add_button_clear_rendered(node, path):
     name = "clearRendered"
     label = "Clear Rendered"
     value = "import clear_rendered;\
-        clear_rendered.clear_rendered(\"{}\")".format(path)
+        clear_rendered.clear_rendered('{}')".format(path)
     knob = nuke.PyScript_Knob(name, label, value)
     node.addKnob(knob)
 
@@ -1160,23 +1151,42 @@ def create_write_node(
         product_name=product_name
     )
 
-    for knob in imageio_writes["knobs"]:
-        if knob["name"] == "file_type":
-            knot_type = knob["type"]
-            ext = knob[knot_type]
+    ext = None
+    knobs = imageio_writes["knobs"]
+    knob_names = {knob["name"]: knob for knob in knobs}
+
+    if "ext" in knob_names:
+        knob_type = knob_names["ext"]["type"]
+        ext = knob_names["ext"][knob_type]
+
+    # For most extensions, setting the "file_type"
+    # is enough, however sometimes they differ, e.g.:
+    # ext = sxr / file_type = exr
+    # ext = jpg / file_type = jpeg
+    elif "file_type" in knob_names:
+        knob_type = knob_names["file_type"]["type"]
+        ext = knob_names["file_type"][knob_type]
+
+    if not ext:
+        raise RuntimeError(
+            "Could not determine extension from settings for "
+            f"plugin_name={plugin_name} product_name={product_name}"
+        )
 
     data.update({
         "imageio_writes": imageio_writes,
         "ext": ext
     })
-    anatomy_filled = format_anatomy(data)
 
     # build file path to workfiles
-    fdir = str(
-        anatomy_filled["work"]["default"]["directory"]
-    ).replace("\\", "/")
-    data["work"] = fdir
+    data["work"] = get_work_default_directory(data)
     fpath = StringTemplate(data["fpath_template"]).format_strict(data)
+
+    # Override output directory is provided staging directory.
+    if data.get("staging_dir"):
+        basename = os.path.basename(fpath)
+        staging_path = pathlib.Path(data["staging_dir"]) / basename
+        fpath = staging_path.as_posix()
 
     # create directory
     if not os.path.isdir(os.path.dirname(fpath)):
@@ -1463,9 +1473,16 @@ class WorkfileSettings(object):
         Context._project_entity = project_entity
         self._project_name = project_name
         self._folder_path = get_current_folder_path()
-        self._task_name = get_current_task_name()
         self._folder_entity = ayon_api.get_folder_by_path(
             project_name, self._folder_path
+        )
+        self._task_name = get_current_task_name()
+        self._context_label = "{} > {}".format(self._folder_path,
+                                               self._task_name)
+        self._task_entity = ayon_api.get_task_by_name(
+            project_name,
+            self._folder_entity["id"],
+            self._task_name
         )
         self._root_node = root_node or nuke.root()
         self._nodes = self.get_nodes(nodes=nodes)
@@ -1490,6 +1507,7 @@ class WorkfileSettings(object):
             for filter in nodes_filter:
                 return [n for n in self._nodes if filter in n.Class()]
 
+    # TODO: move into ./colorspace.py
     def set_viewers_colorspace(self, imageio_nuke):
         ''' Adds correct colorspace to viewer
 
@@ -1502,11 +1520,11 @@ class WorkfileSettings(object):
             "wipe_position",
             "monitorOutOutputTransform"
         ]
-        viewer_process = self._display_and_view_formatted(
-            imageio_nuke["viewer"]
+        viewer_process = get_formatted_display_and_view(
+            imageio_nuke["viewer"], self.formatting_data, self._root_node
         )
-        output_transform = self._display_and_view_formatted(
-            imageio_nuke["monitor"]
+        output_transform = get_formatted_display_and_view(
+            imageio_nuke["monitor"], self.formatting_data, self._root_node
         )
         erased_viewers = []
         for v in nuke.allNodes(filter="Viewer"):
@@ -1532,8 +1550,8 @@ class WorkfileSettings(object):
                     nv.setInput(i, n)
 
                 # set copied knobs
-                for k, v in copy_knobs.items():
-                    nv[k].setValue(v)
+                for knob_name, knob_value in copy_knobs.items():
+                    nv[knob_name].setValue(knob_value)
 
                 # set viewerProcess
                 nv["viewerProcess"].setValue(viewer_process)
@@ -1544,21 +1562,7 @@ class WorkfileSettings(object):
                 "Attention! Viewer nodes {} were erased."
                 "It had wrong color profile".format(erased_viewers))
 
-    def _display_and_view_formatted(self, view_profile):
-        """ Format display and view profile string
-
-        Args:
-            view_profile (dict): view and display profile
-
-        Returns:
-            str: formatted display and view profile string
-        """
-        display_view = create_viewer_profile_string(
-            view_profile["view"], view_profile["display"], path_like=False
-        )
-        # format any template tokens used in the string
-        return StringTemplate(display_view).format_strict(self.formatting_data)
-
+    # TODO: move into ./colorspace.py
     def set_root_colorspace(self, imageio_host):
         ''' Adds correct colorspace to root
 
@@ -1818,6 +1822,7 @@ Reopening Nuke should synchronize these paths and resolve any discrepancies.
 
         return new_path
 
+    # TODO: move into ./colorspace.py
     def set_writes_colorspace(self):
         ''' Adds correct colorspace to write node dict
 
@@ -1895,6 +1900,7 @@ Reopening Nuke should synchronize these paths and resolve any discrepancies.
             set_node_knobs_from_settings(
                 write_node, nuke_imageio_writes["knobs"])
 
+    # TODO: move into ./colorspace.py
     def set_reads_colorspace(self, read_clrs_inputs):
         """ Setting colorspace to Read nodes
 
@@ -1942,6 +1948,7 @@ Reopening Nuke should synchronize these paths and resolve any discrepancies.
                             nname,
                             knobs["to"]))
 
+    # TODO: move into ./colorspace.py
     def set_colorspace(self):
         ''' Setting colorspace following presets
         '''
@@ -1977,39 +1984,39 @@ Reopening Nuke should synchronize these paths and resolve any discrepancies.
     def reset_frame_range_handles(self):
         """Set frame range to current folder."""
 
-        if "attrib" not in self._folder_entity:
-            msg = "Folder {} don't have set any 'attrib'".format(
-                self._folder_path
+        if "attrib" not in self._task_entity:
+            msg = "Task {} doesn't have set any 'attrib'".format(
+                self._context_label
             )
             log.warning(msg)
             nuke.message(msg)
             return
 
-        folder_attributes = self._folder_entity["attrib"]
+        task_attributes = self._task_entity["attrib"]
 
         missing_cols = []
         check_cols = ["fps", "frameStart", "frameEnd",
                       "handleStart", "handleEnd"]
 
         for col in check_cols:
-            if col not in folder_attributes:
+            if col not in task_attributes:
                 missing_cols.append(col)
 
         if len(missing_cols) > 0:
             missing = ", ".join(missing_cols)
-            msg = "'{}' are not set for folder '{}'!".format(
-                missing, self._folder_path)
+            msg = "'{}' are not set for task '{}'!".format(
+                missing, self._context_label)
             log.warning(msg)
             nuke.message(msg)
             return
 
         # get handles values
-        handle_start = folder_attributes["handleStart"]
-        handle_end = folder_attributes["handleEnd"]
-        frame_start = folder_attributes["frameStart"]
-        frame_end = folder_attributes["frameEnd"]
+        handle_start = task_attributes["handleStart"]
+        handle_end = task_attributes["handleEnd"]
+        frame_start = task_attributes["frameStart"]
+        frame_end = task_attributes["frameEnd"]
 
-        fps = float(folder_attributes["fps"])
+        fps = float(task_attributes["fps"])
         frame_start_handle = frame_start - handle_start
         frame_end_handle = frame_end + handle_end
 
@@ -2049,12 +2056,12 @@ Reopening Nuke should synchronize these paths and resolve any discrepancies.
         """Set resolution to project resolution."""
         log.info("Resetting resolution")
         project_name = get_current_project_name()
-        folder_attributes = self._folder_entity["attrib"]
+        task_attributes = self._task_entity["attrib"]
 
         format_data = {
-            "width": folder_attributes["resolutionWidth"],
-            "height": folder_attributes["resolutionHeight"],
-            "pixel_aspect": folder_attributes["pixelAspect"],
+            "width": task_attributes["resolutionWidth"],
+            "height": task_attributes["resolutionHeight"],
+            "pixel_aspect": task_attributes["pixelAspect"],
             "name": project_name
         }
 
@@ -2273,6 +2280,11 @@ def find_free_space_to_paste_nodes(
         group_ypos = [n.ypos() for n in nuke.allNodes() if n not in nodes] + \
                      [n.ypos() + n.screenHeight() for n in nuke.allNodes()
                       if n not in nodes]
+
+        if len(group_xpos) == 0:
+            group_xpos = [0]
+        if len(group_ypos) == 0:
+            group_ypos = [0]
 
         # calc output left
         if direction in "left":
@@ -2558,66 +2570,81 @@ def add_scripts_menu():
 def add_scripts_gizmo():
 
     # load configuration of custom menu
-    project_name = get_current_project_name()
-    project_settings = get_project_settings(project_name)
+    project_settings = get_current_project_settings()
     platform_name = platform.system().lower()
 
+    template_data = get_current_context_template_data_and_environ()
+
     for gizmo_settings in project_settings["nuke"]["gizmo"]:
-        gizmo_list_definition = gizmo_settings["gizmo_definition"]
+        # Get the toolbar.
         toolbar_name = gizmo_settings["toolbar_menu_name"]
-        # gizmo_toolbar_path = gizmo_settings["gizmo_toolbar_path"]
-        gizmo_source_dir = gizmo_settings.get(
-            "gizmo_source_dir", {}).get(platform_name)
-        toolbar_icon_path = gizmo_settings.get(
-            "toolbar_icon_path", {}).get(platform_name)
 
-        if not gizmo_source_dir:
-            log.debug("Skipping studio gizmo `{}`, "
-                      "no gizmo path found.".format(toolbar_name)
-                      )
-            return
-
-        if not gizmo_list_definition:
-            log.debug("Skipping studio gizmo `{}`, "
-                      "no definition found.".format(toolbar_name)
-                      )
-            return
-
+        toolbar_icon_path = gizmo_settings["toolbar_icon_path"][platform_name]
         if toolbar_icon_path:
-            try:
-                toolbar_icon_path = toolbar_icon_path.format(**os.environ)
-            except KeyError as e:
-                log.error(
-                    "This environment variable doesn't exist: {}".format(e)
-                )
+            toolbar_icon_path = StringTemplate.format_template(
+                toolbar_icon_path, template_data)
 
-        existing_gizmo_path = []
-        for source_dir in gizmo_source_dir:
-            try:
-                resolve_source_dir = source_dir.format(**os.environ)
-            except KeyError as e:
-                log.error(
-                    "This environment variable doesn't exist: {}".format(e)
-                )
-                continue
-            if not os.path.exists(resolve_source_dir):
-                log.warning(
-                    "The source of gizmo `{}` does not exists".format(
-                        resolve_source_dir
-                    )
-                )
-                continue
-            existing_gizmo_path.append(resolve_source_dir)
+        # Create the toolbar
+        toolbar_menu = GizmoMenu(
+                title=toolbar_name,
+                icon=toolbar_icon_path or get_ayon_icon_filepath()
+            )
 
-        # run the launcher for Nuke toolbar
-        toolbar_menu = gizmo_menu.GizmoMenu(
-            title=toolbar_name,
-            icon=toolbar_icon_path
-        )
+        # Add gizmos based on options
+        option = gizmo_settings["options"]
+        gizmos = gizmo_settings[option]
+        if not gizmos:
+            continue
 
-        # apply configuration
-        toolbar_menu.add_gizmo_path(existing_gizmo_path)
-        toolbar_menu.build_from_configuration(gizmo_list_definition)
+        if option == "gizmo_source_dir":
+            gizmo_paths_to_add = gizmos[platform_name]
+            if gizmo_paths_to_add:
+                gizmo_paths_to_add = StringTemplate.format_template(
+                    gizmo_paths_to_add, template_data)
+                toolbar_menu.add_gizmo_path(gizmo_paths_to_add)
+        elif option == "gizmo_definition":
+            for gizmo in gizmos:
+                for gizmo_item in gizmo["sub_gizmo_list"]:
+                    gizmo_item_icon = gizmo_item["icon"]
+                    if gizmo_item_icon:
+                        gizmo_item["icon"] = StringTemplate.format_template(
+                            gizmo_item_icon, template_data)
+            toolbar_menu.build_from_configuration(gizmos)
+
+
+def get_current_context_template_data_and_environ():
+    """Return current context template data and os environ.
+
+    Output contains:
+      - Regular template data from `get_template_data`
+      - Anatomy Roots
+      - os.environ keys
+
+    Returns:
+         dict[str, Any]: Template data to fill templates.
+
+    """
+    context = get_current_context()
+    project_name = context["project_name"]
+    folder_path = context["folder_path"]
+    task_name = context["task_name"]
+    host_name = get_current_host_name()
+
+    project_entity = ayon_api.get_project(project_name)
+    anatomy = Anatomy(project_name, project_entity=project_entity)
+    folder_entity = ayon_api.get_folder_by_path(project_name, folder_path)
+    task_entity = ayon_api.get_task_by_name(
+        project_name, folder_entity["id"], task_name
+    )
+
+    template_data = get_template_data(
+        project_entity, folder_entity, task_entity, host_name
+    )
+    template_data["root"] = anatomy.roots
+
+    template_data.update(os.environ)
+
+    return template_data
 
 
 class NukeDirmap(HostDirmap):

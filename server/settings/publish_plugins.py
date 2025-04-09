@@ -32,6 +32,14 @@ def nuke_product_types_enum():
     ] + nuke_render_publish_types_enum()
 
 
+def nuke_export_formats_enum():
+    """Return all nuke export format available in creators."""
+    return [
+        {"value": "abc", "label": "Alembic"},
+        {"value": "fbx", "label": "FBX"},    
+    ]
+
+
 class NodeModel(BaseSettingsModel):
     name: str = SettingsField(
         title="Node name"
@@ -84,10 +92,12 @@ class ValidateKnobsModel(BaseSettingsModel):
 
 
 class ExtractReviewDataModel(BaseSettingsModel):
-    enabled: bool = SettingsField(title="Enabled")
+    """Add a raw reviewable representation from the output of a write node.
 
-
-class ExtractReviewDataLutModel(BaseSettingsModel):
+    This can be useful when you don't want to use e.g. Extract Review
+    Intermediates with baking streams but are already writing ready for
+    review images that don't need custom baking.
+    """
     enabled: bool = SettingsField(title="Enabled")
 
 
@@ -186,6 +196,15 @@ class FVFXScopeOfWorkModel(BaseSettingsModel):
     template: str = SettingsField(title="Template")
 
 
+class ExtractCameraFormatModel(BaseSettingsModel):
+    export_camera_format: str = SettingsField(
+        enum_resolver=nuke_export_formats_enum,
+        conditionalEnum=True,
+        title="Camera export format",
+        description="Switch between different camera export formats",
+    )
+
+
 class ExctractSlateFrameParamModel(BaseSettingsModel):
     f_submission_note: FSubmissionNoteModel = SettingsField(
         title="f_submission_note",
@@ -207,12 +226,6 @@ class ExtractSlateFrameModel(BaseSettingsModel):
         title="Key value mapping",
         default_factory=ExctractSlateFrameParamModel
     )
-
-
-class IncrementScriptVersionModel(BaseSettingsModel):
-    enabled: bool = SettingsField(title="Enabled")
-    optional: bool = SettingsField(title="Optional")
-    active: bool = SettingsField(title="Active")
 
 
 class PublishPluginsModel(BaseSettingsModel):
@@ -250,24 +263,40 @@ class PublishPluginsModel(BaseSettingsModel):
         title="Extract Review Data",
         default_factory=ExtractReviewDataModel
     )
-    ExtractReviewDataLut: ExtractReviewDataLutModel = SettingsField(
-        title="Extract Review Data Lut",
-        default_factory=ExtractReviewDataLutModel
-    )
+
     ExtractReviewIntermediates: ExtractReviewIntermediatesModel = (
         SettingsField(
             title="Extract Review Intermediates",
             default_factory=ExtractReviewIntermediatesModel
         )
     )
+    ExtractCameraFormat: ExtractCameraFormatModel = SettingsField(
+        title="Extract Camera Format",
+        default_factory=ExtractCameraFormatModel        
+    )
     ExtractSlateFrame: ExtractSlateFrameModel = SettingsField(
         title="Extract Slate Frame",
         default_factory=ExtractSlateFrameModel
     )
-    IncrementScriptVersion: IncrementScriptVersionModel = SettingsField(
+    IncrementScriptVersion: OptionalPluginModel = SettingsField(
         title="Increment Workfile Version",
-        default_factory=IncrementScriptVersionModel,
-        section="Integrators"
+        default_factory=OptionalPluginModel,
+        section="Integrators",
+        description=(
+            "Bumps up version of workfile if there are no errors in previous "
+            "plugins."
+        )
+    )
+    IncrementWriteNodePath: OptionalPluginModel = SettingsField(
+        title="Increment path in Write node",
+        default_factory=OptionalPluginModel,
+        section="Integrators",
+        description=(
+            "Updates version portion of path in Write node with current "
+            "workfile version. This allows have versioned intermediate "
+            "`renders` subfolders. "
+            "It depends on setting `ayon+settings://core/tools/publish/custom_staging_dir_profiles/0`"
+        )
     )
 
 
@@ -318,9 +347,6 @@ DEFAULT_PUBLISH_PLUGIN_SETTINGS = {
         "active": True
     },
     "ExtractReviewData": {
-        "enabled": False
-    },
-    "ExtractReviewDataLut": {
         "enabled": False
     },
     "ExtractReviewIntermediates": {
@@ -387,6 +413,9 @@ DEFAULT_PUBLISH_PLUGIN_SETTINGS = {
             }
         ]
     },
+    "ExtractCameraFormat": {
+        "export_camera_format": "abc",
+    },
     "ExtractSlateFrame": {
         "viewer_lut_raw": False,
         "key_value_mapping": {
@@ -406,6 +435,11 @@ DEFAULT_PUBLISH_PLUGIN_SETTINGS = {
     },
     "IncrementScriptVersion": {
         "enabled": True,
+        "optional": True,
+        "active": True
+    },
+    "IncrementWriteNodePath": {
+        "enabled": False,
         "optional": True,
         "active": True
     }

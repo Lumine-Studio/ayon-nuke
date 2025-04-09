@@ -11,15 +11,48 @@ from .common import (
     ColorspaceConfigurationModel,
 )
 
+def nuke_creator_plugins_enum():
+    return [
+        {"value": "CreateWritePrerender", "label": "Prerender (write)"},
+        {"value": "CreateCamera", "label": "Camera (3d)"},
+        {"value": "CreateGizmo", "label": "Gizmo (group)"},
+        {"value": "CreateWriteImage", "label": "Image (write)"},
+        {"value": "CreateModel", "label": "Model (3d)"},
+        {"value": "CreateBackdrop", "label": "Nukenodes (backdrop)"},
+        {"value": "CreateWriteRender", "label": "Render (write)"},
+        {"value": "CreateSource", "label": "Source (read)"},
+    ]
+
+
+def nuke_node_class_enum():
+    return [
+        {"value": "Write", "label": "Write [Image]"},
+        {"value": "Read", "label": "Read [Image]"},
+        {"value": "Group", "label": "Group [Other]"},
+        {"value": "Camera4", "label": "Camera [3D]"},
+        {"value": "Camera2", "label": "Camera [3D Classic]"},
+        {"value": "Scene", "label": "Scene [3D Classic]"},
+        {"value": "BackdropNode", "label": "Backdrop [Other]"},
+        {"value": "custom_class", "label": "Custom Class"},
+    ]
+
 
 class NodesModel(BaseSettingsModel):
     _layout = "expanded"
     plugins: list[str] = SettingsField(
         default_factory=list,
-        title="Used in plugins"
+        title="Used in plugins",
+        enum_resolver=nuke_creator_plugins_enum
     )
     nuke_node_class: str = SettingsField(
         title="Nuke Node Class",
+        enum_resolver=nuke_node_class_enum,
+        conditionalEnum=True,
+    )
+    custom_class: str = SettingsField(
+        default="",
+        title="Custom Node Class",
+        description="Custom node class not listed above (optional)"
     )
 
 
@@ -37,9 +70,9 @@ class RequiredNodesModel(NodesModel):
 
 
 class OverrideNodesModel(NodesModel):
-    subsets: list[str] = SettingsField(
+    product_names: list[str] = SettingsField(
         default_factory=list,
-        title="Subsets"
+        title="Product names"
     )
 
     knobs: list[KnobModel] = SettingsField(
@@ -86,17 +119,29 @@ def ocio_configs_switcher_enum():
 
 
 class WorkfileColorspaceSettings(BaseSettingsModel):
-    """Nuke workfile colorspace preset. """
+    """Workfile colorspace for Nuke root's project settings."""
 
     _isGroup: bool = True
 
     color_management: Literal["Nuke", "OCIO"] = SettingsField(
-        title="Color Management Workflow"
+        title="Color Management Workflow",
+        description=(
+            "Switch between native OCIO configs.\n\n"
+            "This is only used if global color management is **disabled** and"
+            " hence there is no global OCIO environment variable being set."
+        ),
     )
 
     native_ocio_config: str = SettingsField(
         title="Native OpenColorIO Config",
-        description="Switch between native OCIO configs",
+        description=(
+            "Nuke native OCIO config. The number between between the brackets"
+            " after the configs describe which Nuke versions these are"
+            " compatible with.\n\n"
+            "This is only used if global color management is **disabled** and"
+            " hence there is no global OCIO environment variable being set"
+            " **AND** Color Management Workflow above is set to 'OCIO'."
+        ),
         enum_resolver=ocio_configs_switcher_enum,
         conditionalEnum=True
     )
@@ -146,14 +191,23 @@ class ViewProcessModel(BaseSettingsModel):
     display: str = SettingsField(
         "",
         title="Display",
-        description="What display to use",
+        description=(
+            "What display to use. Anatomy context tokens can "
+            "be used to dynamically set the value. And also fallback can "
+            "be defined via ';' (semicolon) separator. \n"
+            "Example: \n'{project[code]} ; ACES'.\n"
+            "Note that we are stripping the spaces around the separator."
+        ),
     )
     view: str = SettingsField(
         "",
         title="View",
         description=(
             "What view to use. Anatomy context tokens can "
-            "be used to dynamically set the value."
+            "be used to dynamically set the value. And also fallback can "
+            "be defined via ';' separator. \nExample: \n"
+            "'{project[code]}_{parent}_{folder[name]} ; sRGB'.\n"
+            "Note that we are stripping the spaces around the separator."
         ),
     )
 
@@ -164,40 +218,23 @@ class MonitorProcessModel(BaseSettingsModel):
     display: str = SettingsField(
         "",
         title="Display",
-        description="What display to use",
+        description=(
+            "What display to use. Anatomy context tokens can "
+            "be used to dynamically set the value. And also fallback can "
+            "be defined via ';' (semicolon) separator. \n"
+            "Example: \n'{project[code]} ; ACES'.\n"
+            "Note that we are stripping the spaces around the separator."
+        ),
     )
     view: str = SettingsField(
         "",
         title="View",
         description=(
             "What view to use. Anatomy context tokens can "
-            "be used to dynamically set the value."
-        ),
-    )
-
-
-class ImageIOConfigModel(BaseSettingsModel):
-    """[DEPRECATED] Addon OCIO config settings. Please set the OCIO config
-    path in the Core addon profiles here
-    (ayon+settings://core/imageio/ocio_config_profiles).
-    """
-
-    override_global_config: bool = SettingsField(
-        False,
-        title="Override global OCIO config",
-        description=(
-            "DEPRECATED functionality. Please set the OCIO config path in the "
-            "Core addon profiles here (ayon+settings://core/imageio/"
-            "ocio_config_profiles)."
-        ),
-    )
-    filepath: list[str] = SettingsField(
-        default_factory=list,
-        title="Config path",
-        description=(
-            "DEPRECATED functionality. Please set the OCIO config path in the "
-            "Core addon profiles here (ayon+settings://core/imageio/"
-            "ocio_config_profiles)."
+            "be used to dynamically set the value. And also fallback can "
+            "be defined via ';' separator. \nExample: \n"
+            "'{project[code]}_{parent}_{folder[name]} ; sRGB'.\n"
+            "Note that we are stripping the spaces around the separator."
         ),
     )
 
@@ -229,10 +266,6 @@ class ImageIOSettings(BaseSettingsModel):
 
     activate_host_color_management: bool = SettingsField(
         True, title="Enable Color Management")
-    ocio_config: ImageIOConfigModel = SettingsField(
-        default_factory=ImageIOConfigModel,
-        title="OCIO config"
-    )
     file_rules: ImageIOFileRulesModel = SettingsField(
         default_factory=ImageIOFileRulesModel,
         title="File Rules"
@@ -240,12 +273,19 @@ class ImageIOSettings(BaseSettingsModel):
     viewer: ViewProcessModel = SettingsField(
         default_factory=ViewProcessModel,
         title="Viewer",
-        description="""Viewer profile is used during
-        Creation of new viewer node at knob viewerProcess"""
+        description=(
+            "Viewer profile is used during Creation of new viewer node at knob"
+            " viewerProcess"
+        )
     )
     monitor: MonitorProcessModel = SettingsField(
         default_factory=MonitorProcessModel,
-        title="Monitor OUT"
+        title="Monitor OUT",
+        description=(
+            "Viewer Monitor Out settings is used during creation of new viewer"
+            " node. This is used for external monitors used with a Nuke"
+            " viewer."
+        )
     )
     baking_target: ColorspaceConfigurationModel = SettingsField(
         default_factory=ColorspaceConfigurationModel,
@@ -295,6 +335,7 @@ DEFAULT_IMAGEIO_SETTINGS = {
             {
                 "plugins": ["CreateWriteRender"],
                 "nuke_node_class": "Write",
+                "custom_class": "",
                 "knobs": [
                     {"type": "text", "name": "file_type", "text": "exr"},
                     {"type": "text", "name": "datatype", "text": "16 bit half"},
@@ -313,6 +354,7 @@ DEFAULT_IMAGEIO_SETTINGS = {
             {
                 "plugins": ["CreateWritePrerender"],
                 "nuke_node_class": "Write",
+                "custom_class": "",
                 "knobs": [
                     {"type": "text", "name": "file_type", "text": "exr"},
                     {"type": "text", "name": "datatype", "text": "16 bit half"},
@@ -331,6 +373,7 @@ DEFAULT_IMAGEIO_SETTINGS = {
             {
                 "plugins": ["CreateWriteImage"],
                 "nuke_node_class": "Write",
+                "custom_class": "",
                 "knobs": [
                     {"type": "text", "name": "file_type", "text": "tiff"},
                     {"type": "text", "name": "datatype", "text": "16 bit"},
