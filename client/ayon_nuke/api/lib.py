@@ -895,6 +895,7 @@ def writes_version_sync(write_node, log):
             exc_info=True
         )
 
+
 def get_version_from_path(file):
     """Find version number in file path string.
 
@@ -982,8 +983,17 @@ def get_work_default_directory(data):
         "frame": "#" * frame_padding,
     })
 
-    work_default_dir_template = anatomy.get_template_item("work", "default", "directory")
+    work_default_dir_template = anatomy.get_template_item(
+        "work", "default", "directory")
     normalized_dir = work_default_dir_template.format_strict(data).normalized()
+
+    # Add work_render directory to data
+    work_default_dir_work_render_template = anatomy.get_template_item(
+        "work", "work_render", "directory")
+    normalized_dir_work_render = work_default_dir_work_render_template.format_strict(
+        data).normalized()
+    data["work_render"] = str(normalized_dir_work_render).replace("\\", "/")
+
     return str(normalized_dir).replace("\\", "/")
 
 
@@ -1180,16 +1190,8 @@ def create_write_node(
 
     # build file path to workfiles
     data["work"] = get_work_default_directory(data)
-    anatomy_work_render = anatomy_filled["work"].get("work_render")
 
-    if anatomy_work_render:
-        fdir_render = str(
-            anatomy_filled["work"]["work_render"]["directory"]
-        ).replace("\\", "/")
-
-        data["work_render"] = fdir_render
     fpath = StringTemplate(data["fpath_template"]).format_strict(data)
-
     # Override output directory is provided staging directory.
     if data.get("staging_dir"):
         basename = os.path.basename(fpath)
@@ -2594,9 +2596,9 @@ def add_scripts_gizmo():
 
         # Create the toolbar
         toolbar_menu = GizmoMenu(
-                title=toolbar_name,
-                icon=toolbar_icon_path or get_ayon_icon_filepath()
-            )
+            title=toolbar_name,
+            icon=toolbar_icon_path or get_ayon_icon_filepath()
+        )
 
         # Add gizmos based on options
         option = gizmo_settings["options"]

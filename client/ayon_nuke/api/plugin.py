@@ -420,7 +420,7 @@ class NukeWriteCreator(NukeCreator):
         staging_dir = self.apply_staging_dir(created_inst)
         if staging_dir:
             basename = os.path.basename(fpath)
-            staging_path = pathlib.Path(staging_dir)/ basename
+            staging_path = pathlib.Path(staging_dir) / basename
             fpath = staging_path.as_posix()
 
         write_node["file"].setValue(fpath)
@@ -528,10 +528,10 @@ class NukeWriteCreator(NukeCreator):
 
         # plugin settings
         plugin_settings = self.get_creator_settings(project_settings)
-        
+
         if not plugin_settings:
             return
-            
+
         temp_rendering_path_template = (
             plugin_settings.get("temp_rendering_path_template")
             or self.temp_rendering_path_template
@@ -836,6 +836,7 @@ class ExporterReview(object):
             f"to {new_version}"
         )
         return staging_dir.replace(staging_dir_version, new_version)
+
 
 class ExporterReviewLut(ExporterReview):
     """
