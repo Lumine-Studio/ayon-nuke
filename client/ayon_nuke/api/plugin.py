@@ -1029,6 +1029,10 @@ class ExporterReviewMov(ExporterReview):
             mov_64_profile = "HQX 4:2:2 12-bit"
             self.log.info("AVdh codec is set...")
 
+        if "ap4444" in add_custom_tags:
+            codec = "appr"
+            mov_64_profile = "ProRes 4:4:4:4 12-bit"
+
         try:
             write_node["meta_codec"].setValue(codec)
         except Exception:
@@ -1042,6 +1046,9 @@ class ExporterReviewMov(ExporterReview):
 
         if codec == "AVdh":
             write_node["mov64_dnxhr_codec_profile"].setValue(mov_64_profile)
+
+        if codec == "appr":
+            write_node["mov_prores_codec_profile"].setValue(mov_64_profile)
 
         if "full-range" in add_custom_tags:
             write_node["dataRange"].setValue("Full Range")
