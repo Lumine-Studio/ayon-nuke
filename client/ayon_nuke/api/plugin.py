@@ -1095,23 +1095,6 @@ class ExporterReviewMov(ExporterReview):
             product_name, r_node, "Read...   `{}`"
         )
 
-        # add reformat node
-        reformat_nodes_config = kwargs["reformat_nodes_config"]
-        if reformat_nodes_config["enabled"]:
-            reposition_nodes = reformat_nodes_config["reposition_nodes"]
-            for reposition_node in reposition_nodes:
-                node_class = reposition_node["node_class"]
-                knobs = reposition_node["knobs"]
-                node = nuke.createNode(node_class)
-                set_node_knobs_from_settings(node, knobs)
-
-                # connect in order
-                self._connect_to_above_nodes(
-                    node, product_name, "Reposition node...   `{}`"
-                )
-            # append reformatted tag
-            add_tags.append("reformatted")
-
         if "lmn-slate" in add_custom_tags:
             self.first_frame = self.first_frame - 1
             slate = next(
@@ -1130,6 +1113,23 @@ class ExporterReviewMov(ExporterReview):
             self._connect_to_above_nodes(
                 duply_slate_node, product_name, "Adding slate node...   `{}`"
             )
+
+        # add reformat node
+        reformat_nodes_config = kwargs["reformat_nodes_config"]
+        if reformat_nodes_config["enabled"]:
+            reposition_nodes = reformat_nodes_config["reposition_nodes"]
+            for reposition_node in reposition_nodes:
+                node_class = reposition_node["node_class"]
+                knobs = reposition_node["knobs"]
+                node = nuke.createNode(node_class)
+                set_node_knobs_from_settings(node, knobs)
+
+                # connect in order
+                self._connect_to_above_nodes(
+                    node, product_name, "Reposition node...   `{}`"
+                )
+            # append reformatted tag
+            add_tags.append("reformatted")
 
         # only create colorspace baking if toggled on
         if bake_viewer_process:
