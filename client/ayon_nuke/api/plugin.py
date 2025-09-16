@@ -1228,6 +1228,10 @@ class ExporterReviewMov(ExporterReview):
             codec = "appr"
             mov_64_profile = "ProRes 4:4:4:4 12-bit"
 
+        if "ap422LT" in add_custom_tags:
+            codec = "appr"
+            mov_64_profile = "ProRes 4:2:2 LT 10-bit"
+
         try:
             write_node["meta_codec"].setValue(codec)
         except Exception:
