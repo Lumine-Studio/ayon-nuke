@@ -1219,6 +1219,9 @@ class ExporterReviewMov(ExporterReview):
         codec = "apcn"
         mov_64 = "apcn"
 
+        if "channels-rgb" in add_custom_tags:
+            write_node["channels"].setValue("rgb")
+
         if "AVdh" in add_custom_tags:
             codec = "AVdh"
             mov_64_profile = "HQX 4:2:2 12-bit"
