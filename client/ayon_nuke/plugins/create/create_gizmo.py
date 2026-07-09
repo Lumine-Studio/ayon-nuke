@@ -16,7 +16,7 @@ class CreateGizmo(NukeCreator):
     product_base_type = "gizmo"
     product_type = product_base_type
     icon = "file-archive-o"
-    default_variants = ["ViewerInput", "Lut", "Effect"]
+    default_variants = ["viewerInput", "lut", "effect"]
 
     # plugin attributes
     node_color = "0x7533c1ff"

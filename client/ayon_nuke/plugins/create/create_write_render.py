@@ -51,11 +51,16 @@ class CreateWriteRender(napi.NukeWriteCreator):
         self.log.debug(">>>>>>> : {}".format(self.instance_attributes))
         self.log.debug(">>>>>>> : {}".format(self.get_linked_knobs()))
 
+        prenodes = self.prenodes
+
+        if product_name == "render_rotoscope":
+            prenodes = None
+
         created_node = napi.create_write_node(
             product_name,
             write_data,
             input=selected_node,
-            prenodes=self.prenodes,
+            prenodes=prenodes,
             linked_knobs=self.get_linked_knobs(),
             **{
                 "width": width,

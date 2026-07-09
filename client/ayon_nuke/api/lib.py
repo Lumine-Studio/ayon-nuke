@@ -979,8 +979,17 @@ def get_work_default_directory(data):
         "frame": "#" * frame_padding,
     })
 
-    work_default_dir_template = anatomy.get_template_item("work", "default", "directory")
+    work_default_dir_template = anatomy.get_template_item(
+        "work", "default", "directory")
     normalized_dir = work_default_dir_template.format_strict(data).normalized()
+
+    # Add work_render directory to data
+    work_default_dir_work_render_template = anatomy.get_template_item(
+        "work", "work_render", "directory")
+    normalized_dir_work_render = work_default_dir_work_render_template.format_strict(
+        data).normalized()
+    data["work_render"] = str(normalized_dir_work_render).replace("\\", "/")
+
     return str(normalized_dir).replace("\\", "/")
 
 
@@ -1645,12 +1654,12 @@ class WorkfileSettings(object):
         if not config_data:
             # no ocio config found and no custom path used
             if self._root_node["colorManagement"].value() \
-                        not in color_management:
+                    not in color_management:
                 self._root_node["colorManagement"].setValue(color_management)
 
             # second set ocio version
             if self._root_node["OCIO_config"].value() \
-                        not in native_ocio_config:
+                    not in native_ocio_config:
                 self._root_node["OCIO_config"].setValue(native_ocio_config)
 
         else:
@@ -2622,9 +2631,9 @@ def add_scripts_gizmo():
 
         # Create the toolbar
         toolbar_menu = GizmoMenu(
-                title=toolbar_name,
-                icon=toolbar_icon_path or get_ayon_icon_filepath()
-            )
+            title=toolbar_name,
+            icon=toolbar_icon_path or get_ayon_icon_filepath()
+        )
 
         # Add gizmos based on options
         option = gizmo_settings["options"]
