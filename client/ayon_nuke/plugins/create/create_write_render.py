@@ -53,7 +53,12 @@ class CreateWriteRender(napi.NukeWriteCreator):
 
         prenodes = self.prenodes
 
-        if product_name == "render_rotoscope":
+        no_prenodes_products = {
+            "render_rotoscope",
+            "render_prep",
+            "render_paint",
+        }
+        if product_name in no_prenodes_products:
             prenodes = None
 
         created_node = napi.create_write_node(
