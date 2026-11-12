@@ -19,7 +19,7 @@ class WorkfileCreator(AutoCreator):
     product_base_type = "workfile"
     product_type = product_base_type
 
-    default_variant = "Main"
+    default_variant = "main"
 
     def get_instance_attr_defs(self):
         return []

@@ -19,7 +19,7 @@ class CreateSource(NukeCreator):
     product_base_type = "source"
     product_type = product_base_type
     icon = "film"
-    default_variants = ["Effect", "Backplate", "Fire", "Smoke"]
+    default_variants = ["effect", "backplate", "fire", "smoke"]
 
     # plugin attributes
     node_color = "0xff9100ff"

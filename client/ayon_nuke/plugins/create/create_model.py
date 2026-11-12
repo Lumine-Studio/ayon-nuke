@@ -16,7 +16,7 @@ class CreateModel(NukeCreator):
     product_base_type = "model"
     product_type = product_base_type
     icon = "cube"
-    default_variants = ["Main"]
+    default_variants = ["main"]
 
     # plugin attributes
     node_color = "0xff3200ff"

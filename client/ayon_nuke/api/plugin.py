@@ -47,6 +47,7 @@ from .lib import (
     link_knobs,
     get_version_from_path,
     convert_knob_value_to_correct_type,
+    duplicate_node,
 )
 from .pipeline import (
     list_instances,
@@ -316,7 +317,7 @@ class NukeCreator(Creator):
     def get_creator_settings(self, project_settings, settings_key=None):
         if not settings_key:
             settings_key = self.__class__.__name__
-        return project_settings["nuke"]["create"][settings_key]
+        return project_settings["nuke"]["create"].get(settings_key)
 
 
 class NukeWriteCreator(NukeCreator):
@@ -438,7 +439,7 @@ class NukeWriteCreator(NukeCreator):
         staging_dir = self.apply_staging_dir(created_inst)
         if staging_dir:
             basename = os.path.basename(fpath)
-            staging_path = pathlib.Path(staging_dir)/ basename
+            staging_path = pathlib.Path(staging_dir) / basename
             fpath = staging_path.as_posix()
 
         write_node["file"].setValue(fpath)
@@ -1366,6 +1367,24 @@ class ExporterReviewMov(ExporterReview):
             product_name, r_node, "Read...   `{}`"
         )
 
+        if "lmn-slate" in add_custom_tags:
+            self.first_frame = self.first_frame - 1
+            slate = next(
+                (
+                    n_ for n_ in nuke.allNodes()
+                    if "PROJECT_SLATE_" in n_.name()
+                    if not n_["disable"].getValue() and
+                    # Exclude instance nodes.
+                    "publish_instance" not in n_.knobs()
+                ),
+                None
+            )
+
+            duply_slate_node = duplicate_node(slate)
+            duply_slate_node["f_media_color"].setValue("Rec709")
+            self._connect_to_above_nodes(
+                duply_slate_node, product_name, "Adding slate node...   `{}`"
+            )
         # only create colorspace baking if toggled on
         if bake_viewer_process:
             if bake_viewer_input_process_node:
@@ -1465,6 +1484,57 @@ class ExporterReviewMov(ExporterReview):
         self._set_write_node_defaults(write_node, fps)
         self._set_custom_knobs(write_node, self.custom_write_knobs, self.log)
 
+        # LMN: codec selection driven by custom tags
+        # Knobs `meta_codec` and `mov64_codec` are not available on centos.
+        # TODO shouldn't this come from settings on outputs?
+
+        codec = "apcn"
+        mov_64 = "apcn"
+
+        if "channels-rgb" in add_custom_tags:
+            write_node["channels"].setValue("rgb")
+
+        if "AVdh" in add_custom_tags:
+            codec = "AVdh"
+            mov_64_profile = "HQX 4:2:2 12-bit"
+            self.log.info("AVdh codec is set...")
+
+        if "ap4444" in add_custom_tags:
+            codec = "appr"
+            mov_64_profile = "ProRes 4:4:4:4 12-bit"
+
+        if "ap422LT" in add_custom_tags:
+            codec = "appr"
+            mov_64_profile = "ProRes 4:2:2 LT 10-bit"
+
+        try:
+            write_node["meta_codec"].setValue(codec)
+        except Exception:
+            self.log.info("`meta_codec` knob was not found")
+
+        try:
+            write_node["mov64_codec"].setValue(codec)
+            write_node["mov64_fps"].setValue(float(fps))
+        except Exception:
+            self.log.info("`mov64_codec` knob was not found")
+
+        if codec == "AVdh":
+            write_node["mov64_dnxhr_codec_profile"].setValue(mov_64_profile)
+
+        if codec == "appr":
+            write_node["mov_prores_codec_profile"].setValue(mov_64_profile)
+
+        if "full-range" in add_custom_tags:
+            write_node["dataRange"].setValue("Full Range")
+
+        if "video-range" in add_custom_tags:
+            write_node["dataRange"].setValue("Video Range")
+
+        try:
+            write_node["mov64_write_timecode"].setValue(1)
+        except Exception:
+            self.log.info("`mov64_write_timecode` knob was not found")
+
         # connect
         write_node.setInput(0, self.previous_node)
         self._temp_nodes[product_name].append(write_node)
@@ -1484,6 +1554,12 @@ class ExporterReviewMov(ExporterReview):
                 "bakeWriteNodeName": write_node.name(),
                 "bakeRenderPath": self.path
             })
+
+            if "lmn-slate" in add_custom_tags:
+                self.data.update({
+                    "bakeSlate": True
+                })
+
         else:
             self.render(write_node.name())
 
@@ -1503,6 +1579,10 @@ class ExporterReviewMov(ExporterReview):
         self.log.debug(f"Representation...   `{self.data}`")
 
         self.clean_nodes(product_name)
+
+        if "lmn-slate" in add_custom_tags:
+            self.first_frame = self.first_frame + 1
+
         # Commit to cleaned workfile + session.
         nuke.scriptSaveAs(
             self.instance.context.data["currentFile"], overwrite=1)
